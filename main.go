@@ -9,54 +9,64 @@ import (
 )
 
 
-// TODOs
+func createRepo() error {
+	/*
+	Repository dir/file structure:
+	 - .gogit
+	    - .gogit/objects/
+		- .gogit/refs/
+		   - gogit/refs/heads/
+		   - gogit/refs/tags/
+		- .gogit/HEAD
+		- .gogit/config (not included)
+		- .gogit/description (not included)
+	*/
 
-/* 1) init Function to create directory structure
-
-	check if file already exists
-
- - .gogit directory
-	- HEAD
-	- objects/
-		- info/
-		- pack/
-	- refs/
-		- heads/
-		- tags/
-
-*/
-
-func initCmd() {
-	path, err := os.Getwd()
+	projDir, err := os.Getwd()
 	if err != nil {
-		log.Println(err)
+		return err
 	}
-	gogitDirPath := filepath.Join(path, ".gogit")
-	if _, err := os.Stat(gogitDirPath); errors.Is(err, os.ErrNotExist) {
-		err := os.Mkdir(gogitDirPath, os.ModePerm)
+
+	repoDir := filepath.Join(projDir, ".gogit/")
+
+	if _, err := os.Stat(repoDir); os.IsExist(err) {
+		return errors.New("repository already exist")
+	}
+
+	// Create dir struct
+	subDir := []string{"/objects/", "/refs/heads/", "/refs/tags/"}
+	for _, subDir := range subDir {
+		fp := filepath.Join(".gogit/", subDir)
+		err := os.MkdirAll(fp, os.ModePerm)
 		if err != nil {
-			log.Println(err)
+			return err
 		}
 	}
-	fmt.Printf("The subdirectory %s is created\n", gogitDirPath)
+
+	// Create HEAD file
+	file, err := os.Create(".gogit/HEAD")
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    buffer := []byte("ref: refs/heads/main\n")
+    file.Write(buffer)
+
+	return nil
 }
 
 
-
-
-
 func main() {
-
 	cmd := os.Args[1:]
 	if len(cmd) < 1 {
 		log.Println("You must pass a valid sub-command")
-		os.Exit(1)
 	}
 	if cmd[0] == "init" {
-		initCmd()
+		err := createRepo()
+		if err != nil {
+			log.Fatal(err)
+		}
 	} else {
-		fmt.Printf("Unknown subcommand %s\n", cmd)
-		os.Exit(1) 
+		fmt.Printf("unknown subcommand: %#v\n", string(cmd[0]))
 	}
-
 }
