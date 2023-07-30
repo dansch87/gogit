@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"errors"
 	"log"
+	"crypto/sha1"
+	"encoding/hex"
 )
 
 
@@ -56,6 +58,25 @@ func createRepo() error {
 }
 
 
+func hashObject(data []byte, objectType string) string {
+	byteSize := len(data)
+	nullByte := []byte("\x00")
+	header := fmt.Sprintf("%s %d%s", objectType, byteSize, string(nullByte))
+
+	fullData := append([]byte(header), data...)
+
+	hasher := sha1.New()
+	hasher.Write(fullData)
+	sha1Hash := hex.EncodeToString(hasher.Sum(nil))
+
+	return sha1Hash
+}
+
+
+
+
+
+
 func main() {
 	cmd := os.Args[1:]
 	if len(cmd) < 1 {
@@ -66,7 +87,12 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+	} else if cmd[0] == "hash" {
+		testData := []byte("what is up, doc?")
+		sha1Hash := hashObject(testData, "blob")
+		fmt.Println(sha1Hash)
 	} else {
-		fmt.Printf("unknown subcommand: %#v\n", string(cmd[0]))
+
+		fmt.Printf("unknown subcommand: %v\n", string(cmd[0]))
 	}
 }
