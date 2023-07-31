@@ -1,27 +1,28 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"errors"
-	"log"
+	"bytes"
+	"compress/zlib"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 )
-
 
 func createRepo() error {
 	/*
-	Repository dir/file structure:
-	 - .gogit
-	    - .gogit/objects/
-		- .gogit/refs/
-		   - gogit/refs/heads/
-		   - gogit/refs/tags/
-		- .gogit/HEAD
-		- .gogit/config (not included)
-		- .gogit/description (not included)
+		Repository dir/file structure:
+		 - .gogit
+		    - .gogit/objects/
+			- .gogit/refs/
+			   - gogit/refs/heads/
+			   - gogit/refs/tags/
+			- .gogit/HEAD
+			- .gogit/config (not included)
+			- .gogit/description (not included)
 	*/
 
 	projDir, err := os.Getwd()
@@ -47,16 +48,15 @@ func createRepo() error {
 
 	// Create HEAD file
 	file, err := os.Create(".gogit/HEAD")
-    if err != nil {
-        return err
-    }
-    defer file.Close()
-    buffer := []byte("ref: refs/heads/main\n")
-    file.Write(buffer)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	buffer := []byte("ref: refs/heads/main\n")
+	file.Write(buffer)
 
 	return nil
 }
-
 
 func hashObject(data []byte, objectType string) string {
 	byteSize := len(data)
@@ -72,13 +72,53 @@ func hashObject(data []byte, objectType string) string {
 	return sha1Hash
 }
 
+func compressData(data []byte) []byte {
+	var buf bytes.Buffer
+	compr := zlib.NewWriter(&buf)
+	compr.Write(data)
+	compr.Close()
+	output := buf.Bytes()
+	return output
+}
 
+func writeDataToDb(data []byte, objectType string) error {
 
+	sha1Hash := hashObject(data, objectType)
 
+	objDir := filepath.Join(".gogit", "objects", sha1Hash[:2])
+	fileName := sha1Hash[2:]
+	objFullPath := filepath.Join(objDir, fileName)
 
+	// Create object directory
+	if _, err := os.Stat(objDir); os.IsNotExist(err) {
+		err := os.Mkdir(objDir, os.ModeDir)
+		if err != nil {
+			return errors.New("object directory couldn't be created")
+		}
+	}
+
+	f, err := os.Create(objFullPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	zlibComprData := compressData(data)
+	cnt, err := f.Write(zlibComprData)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%v bytes written to object database\n", cnt)
+
+	return nil
+}
 
 func main() {
+
+	testData := []byte("what is up, doc?")
+
 	cmd := os.Args[1:]
+
 	if len(cmd) < 1 {
 		log.Println("You must pass a valid sub-command")
 	}
@@ -88,11 +128,14 @@ func main() {
 			log.Fatal(err)
 		}
 	} else if cmd[0] == "hash" {
-		testData := []byte("what is up, doc?")
 		sha1Hash := hashObject(testData, "blob")
 		fmt.Println(sha1Hash)
+	} else if cmd[0] == "write" {
+		err := writeDataToDb(testData, "blob")
+		if err != nil {
+			fmt.Println("Error of test")
+		}
 	} else {
-
 		fmt.Printf("unknown subcommand: %v\n", string(cmd[0]))
 	}
 }
