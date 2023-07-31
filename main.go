@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func createRepo() error {
@@ -58,20 +61,6 @@ func createRepo() error {
 	return nil
 }
 
-func hashObject(data []byte, objectType string) string {
-	byteSize := len(data)
-	nullByte := []byte("\x00")
-	header := fmt.Sprintf("%s %d%s", objectType, byteSize, string(nullByte))
-
-	fullData := append([]byte(header), data...)
-
-	hasher := sha1.New()
-	hasher.Write(fullData)
-	sha1Hash := hex.EncodeToString(hasher.Sum(nil))
-
-	return sha1Hash
-}
-
 func compressData(data []byte) []byte {
 	var buf bytes.Buffer
 	compr := zlib.NewWriter(&buf)
@@ -81,36 +70,98 @@ func compressData(data []byte) []byte {
 	return output
 }
 
-func writeDataToDb(data []byte, objectType string) error {
+func decompressData(data []byte) ([]byte, error) {
+	buf := bytes.NewReader(data[:])
+	z, err := zlib.NewReader(buf)
+	if err != nil {
+		return nil, err
+	}
+	defer z.Close()
 
-	sha1Hash := hashObject(data, objectType)
+	p, err := ioutil.ReadAll(z)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
 
-	objDir := filepath.Join(".gogit", "objects", sha1Hash[:2])
-	fileName := sha1Hash[2:]
-	objFullPath := filepath.Join(objDir, fileName)
+func writeObject(data []byte, objectType string, writeMode bool) (string, error) {
 
-	// Create object directory
-	if _, err := os.Stat(objDir); os.IsNotExist(err) {
-		err := os.Mkdir(objDir, os.ModeDir)
+	// Extend data by header data
+	byteSize := len(data)
+	nullByte := []byte("\x00")
+	header := fmt.Sprintf("%s %d%s", objectType, byteSize, string(nullByte))
+	fullData := append([]byte(header), data...)
+
+	// Hash full data
+	hasher := sha1.New()
+	hasher.Write(fullData)
+	sha1Hash := hex.EncodeToString(hasher.Sum(nil))
+
+	if writeMode {
+		objDir := filepath.Join(".gogit", "objects", sha1Hash[:2])
+		fileName := sha1Hash[2:]
+		objFullPath := filepath.Join(objDir, fileName)
+
+		if _, err := os.Stat(objDir); os.IsNotExist(err) {
+			err := os.Mkdir(objDir, os.ModeDir)
+			if err != nil {
+				return "", errors.New("object directory couldn't be created")
+			}
+		}
+
+		f, err := os.Create(objFullPath)
 		if err != nil {
-			return errors.New("object directory couldn't be created")
+			return "", err
+		}
+		defer f.Close()
+
+		zlibComprData := compressData(fullData)
+		cnt, err := f.Write(zlibComprData)
+		if err != nil {
+			return "", err
+		}
+		fmt.Printf("%v bytes written to object database\n", cnt)
+
+	}
+
+	return sha1Hash, nil
+}
+
+func getNullCharacterIndex(data []byte) (int, error) {
+	for i, v := range data {
+		if v == 0 {
+			return i, nil
 		}
 	}
+	return 0, errors.New("no null character found")
+}
 
-	f, err := os.Create(objFullPath)
+func readObject(sha1Hash string) ([]byte, error) {
+	fp := filepath.Join(".gogit", "objects", sha1Hash[:2], sha1Hash[2:])
+	fmt.Println(fp)
+	file, err := os.Open(fp)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer f.Close()
+	defer file.Close()
 
-	zlibComprData := compressData(data)
-	cnt, err := f.Write(zlibComprData)
+	//fileInfo, _ := file.Stat()
+	//var size int64 = fileInfo.Size()
+
+	reader := bufio.NewReader(file)
+	rawData, err := ioutil.ReadAll(reader)
+	file.Close()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	fmt.Printf("%v bytes written to object database\n", cnt)
 
-	return nil
+	data, err := decompressData(rawData)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
 }
 
 func main() {
@@ -128,13 +179,36 @@ func main() {
 			log.Fatal(err)
 		}
 	} else if cmd[0] == "hash" {
-		sha1Hash := hashObject(testData, "blob")
+		sha1Hash, err := writeObject(testData, "blob", false)
+		if err != nil {
+			fmt.Println(err)
+		}
 		fmt.Println(sha1Hash)
 	} else if cmd[0] == "write" {
-		err := writeDataToDb(testData, "blob")
+		sha1Hash, err := writeObject(testData, "blob", true)
 		if err != nil {
-			fmt.Println("Error of test")
+			fmt.Println(err)
 		}
+		fmt.Println(sha1Hash)
+	} else if cmd[0] == "read" {
+		sha1Hash, err := writeObject(testData, "blob", false)
+		if err != nil {
+			fmt.Println(err)
+		}
+		data, err := readObject(sha1Hash)
+		if err != nil {
+			fmt.Println(err)
+		}
+		nullIndex, err := getNullCharacterIndex(data)
+		if err != nil {
+			fmt.Println(err)
+		}
+		header := strings.Fields(string(data[:nullIndex]))
+		fmt.Printf("Object Type: %s\n", header[0])
+		fmt.Printf("Byte Length: %s\n", header[1])
+		fmt.Print("\nData:\n")
+		fmt.Println(string(data[nullIndex:]))
+
 	} else {
 		fmt.Printf("unknown subcommand: %v\n", string(cmd[0]))
 	}
